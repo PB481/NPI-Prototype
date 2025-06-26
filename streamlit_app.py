@@ -64,7 +64,10 @@ if deal_file and excel_file:
         # Filter deal_df based on calculation_date
         deal_df_filtered = deal_df[deal_df['xd_date'] <= pd.to_datetime(calculation_date)]
 
-        deal_subset = deal_df_filtered[['isin', 'net_domestic_amount_to_purify']]
+        # Aggregate net_domestic_amount_to_purify for each ISIN in the filtered deal data
+        deal_df_filtered['net_domestic_amount_to_purify'] = pd.to_numeric(deal_df_filtered['net_domestic_amount_to_purify'], errors='coerce').fillna(0)
+        deal_subset_aggregated = deal_df_filtered.groupby('isin')['net_domestic_amount_to_purify'].sum().reset_index()
+        deal_subset_aggregated.rename(columns={'net_domestic_amount_to_purify': 'aggregated_net_domestic_amount_to_purify'}, inplace=True)
 
         # --- 2. Read report data from Excel file ---
         excel_data = io.BytesIO(excel_file.getvalue())
@@ -79,43 +82,48 @@ if deal_file and excel_file:
         details_df = report_df.iloc[details_data_start_index:].copy()
         details_df.columns = report_df.iloc[details_header_index]
 
-        # Ensure 'Security Sedol' is string type for merging
+        # Ensure 'Security Sedol' and 'Ex Date' are correct types for filtering and merging
         details_df['Security Sedol'] = details_df['Security Sedol'].astype(str)
+        details_df['Ex Date'] = pd.to_datetime(details_df['Ex Date'], errors='coerce')
+
+        # Filter details_df based on calculation_date
+        details_df_filtered_by_date = details_df[details_df['Ex Date'] <= pd.to_datetime(calculation_date)]
 
         # --- Validation Checks ---
-        # Check 1: Security Count Check
-        excel_securities = set(details_df['Security Sedol'].unique())
-        deal_securities = set(deal_df_filtered['isin'].unique()) # Use filtered deal_df for this check
+        # Check 1: Security Count Check (using filtered dataframes)
+        excel_securities = set(details_df_filtered_by_date['Security Sedol'].unique())
+        deal_securities = set(deal_subset_aggregated['isin'].unique()) # Use aggregated deal_subset for this check
 
         if len(excel_securities) != len(deal_securities):
-            st.warning(f"Security count mismatch! Excel file has {len(excel_securities)} unique securities, while filtered text file has {len(deal_securities)}.")
-            st.warning(f"Securities only in Excel: {excel_securities - deal_securities}")
-            st.warning(f"Securities only in Filtered Text: {deal_securities - excel_securities}")
+            st.warning(f"Security count mismatch! Excel file (filtered by date) has {len(excel_securities)} unique securities, while filtered and aggregated text file has {len(deal_securities)}.")
+            st.warning(f"Securities only in Excel (filtered): {excel_securities - deal_securities}")
+            st.warning(f"Securities only in Filtered Text (aggregated): {deal_securities - excel_securities}")
             # Do not stop, just warn
 
-        # New Check: Duplicate ISINs in deal_df_filtered
-        duplicate_isins = deal_df_filtered[deal_df_filtered.duplicated(subset=['isin'], keep=False)]['isin'].unique()
-        if len(duplicate_isins) > 0:
-            st.warning(f"Multiple entries found for the following ISIN(s) in the filtered text file: {', '.join(duplicate_isins)}.")
-            st.warning("This might lead to unexpected results in the NPI Base calculation if not handled as intended.")
+        # New Check: Duplicate ISINs in original deal_df (before aggregation)
+        duplicate_isins_original = deal_df[deal_df.duplicated(subset=['isin'], keep=False)]['isin'].unique()
+        if len(duplicate_isins_original) > 0:
+            st.warning(f"Multiple entries found for the following ISIN(s) in the original text file: {', '.join(duplicate_isins_original)}.")
+            st.warning("These have been aggregated for NPI calculation. This might lead to unexpected results if not handled as intended.")
             # Do not stop, just warn
 
-        # --- 4. Merge and calculate (using the original details_df for the main merge) ---
-        merged_df = pd.merge(details_df, deal_subset, left_on='Security Sedol', right_on='isin', how='left')
+        # --- 4. Merge and calculate ---
+        # Merge the date-filtered Excel details with the aggregated MSCI data
+        merged_df = pd.merge(details_df_filtered_by_date, deal_subset_aggregated, left_on='Security Sedol', right_on='isin', how='left')
 
         if merged_df.empty:
-            st.warning("No matching ISINs found between the uploaded files. Please check the 'Security Sedol' column in your Excel file and 'isin' in your text file.")
+            st.warning("No matching ISINs found between the uploaded files (after date filtering). Please check the 'Security Sedol' column in your Excel file and 'isin' in your text file, and the selected NPI Calculation Date.")
             st.stop()
 
-        merged_df['net_domestic_amount_to_purify'] = pd.to_numeric(merged_df['net_domestic_amount_to_purify'].replace('', np.nan), errors='coerce')
+        merged_df['aggregated_net_domestic_amount_to_purify'] = pd.to_numeric(merged_df['aggregated_net_domestic_amount_to_purify'].replace('', np.nan), errors='coerce')
         merged_df['Accured Income Net (Base)'] = pd.to_numeric(merged_df['Accured Income Net (Base)'], errors='coerce')
-        merged_df['NPI Base'] = merged_df['net_domestic_amount_to_purify'] * merged_df['Accured Income Net (Base)']
+        merged_df['NPI Base'] = merged_df['aggregated_net_domestic_amount_to_purify'] * merged_df['Accured Income Net (Base)']
 
         # --- 5. Clean up and calculate total ---
-        merged_df['net_domestic_amount_to_purify'] = merged_df['net_domestic_amount_to_purify'].fillna(0)
+        merged_df['aggregated_net_domestic_amount_to_purify'] = merged_df['aggregated_net_domestic_amount_to_purify'].fillna(0)
         merged_df['NPI Base'] = merged_df['NPI Base'].fillna(0)
-        details_df = merged_df.drop(columns=['isin']) # drop redundant isin column
-        npi_base_total = details_df['NPI Base'].sum()
+        details_df_final = merged_df.drop(columns=['isin']) # drop redundant isin column
+        npi_base_total = details_df_final['NPI Base'].sum()
 
         # --- 6. Add total to summary ---
         total_row_index = summary_df[summary_df[0] == 'Total'].index[0]
@@ -131,7 +139,7 @@ if deal_file and excel_file:
         output_excel_buffer = io.BytesIO()
         with pd.ExcelWriter(output_excel_buffer, engine='openpyxl') as writer:
             summary_df.to_excel(writer, index=False, header=False, sheet_name='Sheet1')
-            details_df.to_excel(writer, index=False, header=True, sheet_name='Sheet1', startrow=len(summary_df))
+            details_df_final.to_excel(writer, index=False, header=True, sheet_name='Sheet1', startrow=len(summary_df))
         output_excel_buffer.seek(0)
 
         st.download_button(
