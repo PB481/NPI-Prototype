@@ -135,6 +135,10 @@ if deal_file and excel_file:
 
         summary_df = pd.concat([summary_df.iloc[:total_row_index+1], new_row, summary_df.iloc[total_row_index+1:]]).reset_index(drop=True)
 
+        # --- Display Report Details Preview ---
+        st.subheader("Report Details Preview (Filtered by NPI Calculation Date):")
+        st.dataframe(details_df_final)
+
         # --- 7. Provide download button ---
         output_excel_buffer = io.BytesIO()
         with pd.ExcelWriter(output_excel_buffer, engine='openpyxl') as writer:
