@@ -2,7 +2,8 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import io
-import inspect # Import the inspect module
+import inspect
+import datetime # Import datetime module
 
 st.set_page_config(layout="wide")
 st.title("Dividend Receivable Report Generator")
@@ -21,6 +22,9 @@ This application helps in enriching a standard **Dividend Receivable Report** wi
 
 **Note:** The app includes checks for security count mismatches between files and highlights if multiple entries for the same ISIN are found in the MSCI data.
 """)
+
+# Date input for calculation
+calculation_date = st.date_input("Select NPI Calculation Date", datetime.date.today())
 
 # File uploaders
 deal_file = st.file_uploader("Upload _deal_custom_20250323_D_712743.txt", type=["txt"])
@@ -53,7 +57,14 @@ if deal_file and excel_file:
             'reserved_17', 'reserved_18', 'reserved_19'
         ]
         deal_df = pd.DataFrame(data, columns=columns)
-        deal_subset = deal_df[['isin', 'net_domestic_amount_to_purify']]
+
+        # Convert xd_date to datetime objects for filtering
+        deal_df['xd_date'] = pd.to_datetime(deal_df['xd_date'], format='%Y%m%d', errors='coerce')
+
+        # Filter deal_df based on calculation_date
+        deal_df_filtered = deal_df[deal_df['xd_date'] <= pd.to_datetime(calculation_date)]
+
+        deal_subset = deal_df_filtered[['isin', 'net_domestic_amount_to_purify']]
 
         # --- 2. Read report data from Excel file ---
         excel_data = io.BytesIO(excel_file.getvalue())
@@ -74,18 +85,18 @@ if deal_file and excel_file:
         # --- Validation Checks ---
         # Check 1: Security Count Check
         excel_securities = set(details_df['Security Sedol'].unique())
-        deal_securities = set(deal_df['isin'].unique())
+        deal_securities = set(deal_df_filtered['isin'].unique()) # Use filtered deal_df for this check
 
         if len(excel_securities) != len(deal_securities):
-            st.warning(f"Security count mismatch! Excel file has {len(excel_securities)} unique securities, while text file has {len(deal_securities)}.")
+            st.warning(f"Security count mismatch! Excel file has {len(excel_securities)} unique securities, while filtered text file has {len(deal_securities)}.")
             st.warning(f"Securities only in Excel: {excel_securities - deal_securities}")
-            st.warning(f"Securities only in Text: {deal_securities - excel_securities}")
+            st.warning(f"Securities only in Filtered Text: {deal_securities - excel_securities}")
             # Do not stop, just warn
 
-        # New Check: Duplicate ISINs in deal_df
-        duplicate_isins = deal_df[deal_df.duplicated(subset=['isin'], keep=False)]['isin'].unique()
+        # New Check: Duplicate ISINs in deal_df_filtered
+        duplicate_isins = deal_df_filtered[deal_df_filtered.duplicated(subset=['isin'], keep=False)]['isin'].unique()
         if len(duplicate_isins) > 0:
-            st.warning(f"Multiple entries found for the following ISIN(s) in the text file: {', '.join(duplicate_isins)}.")
+            st.warning(f"Multiple entries found for the following ISIN(s) in the filtered text file: {', '.join(duplicate_isins)}.")
             st.warning("This might lead to unexpected results in the NPI Base calculation if not handled as intended.")
             # Do not stop, just warn
 
