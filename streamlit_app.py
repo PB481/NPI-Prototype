@@ -18,7 +18,8 @@ def load_data_from_upload(uploaded_file):
     # Find the line that defines column headers (e.g., "# 1        2       3 ...")
     header_line_index = -1
     for i, line in enumerate(lines):
-        if re.match(r'^#\s*\d+\s+\d+\s+\d+', line):
+        # This regex looks for a line starting with '#', followed by a number, then spaces, then another number
+        if re.match(r'^#\s*\d+\s+\d+\s+\d+', line): [cite: 20, 21, 22, 23, 24, 25, 26, 27]
             header_line_index = i
             break
 
@@ -29,50 +30,59 @@ def load_data_from_upload(uploaded_file):
     # Extract column names from the lines starting with '#'
     column_definitions = []
     for line in lines:
+        # Check if line starts with '#' and is not the data structure line or #EOD
+        # Also, ensure it's not a line of just '#' or 'Reserved' or the numbered header line
         if line.startswith('#') and \
            not re.match(r'^#\s*\d+\s+\d+\s+\d+', line) and \
            '#EOD' not in line and \
-           '#' not in line[1:]: # Ensure it's a primary definition line, not a commented out data line
-            parts = line.strip().split(None, 3)
-            if len(parts) >= 3:
-                column_definitions.append(parts[2])
+           '#' not in line[1:] and \
+           'Reserved' not in line and \
+           not re.match(r'^#\s*\d+\s+.*', line): # Avoid lines like '# 1        2       3 ...' and commented lines
+            parts = line.strip().split(None, 3) # Split by whitespace, max 3 splits
+            if len(parts) >= 3: # Ensure there's at least a number, descriptive name, and programmatic name
+                column_definitions.append(parts[2]) # programmatic name is the third part
 
     # The actual data starts after the "SSL>>>..." line
     data_start_index = -1
     for i, line in enumerate(lines):
-        if line.startswith('SSL>>>>>>>SSV'):
-            data_start_index = i + 1
+        # Relaxed regex to match 'SSL' followed by any number of '>' and then 'SSV' or 'SSL'
+        if re.match(r'SSL>+(SSV|SSL)', line): [cite: 27]
+            data_start_index = i + 1 # Data starts on the next line
             break
 
     if data_start_index == -1:
-        st.error("Could not find the start of data in the file. Expected pattern 'SSL>>>>>>>SSV...'")
+        st.error("Could not find the start of data in the file. Expected a pattern like 'SSL>>>>>>SSV...' or 'SSL>>>>>>SSL...'")
         return pd.DataFrame()
 
     # Extract raw data lines
     raw_data = []
     for line in lines[data_start_index:]:
-        if line.strip() == '#EOD' or not line.strip():
+        if line.strip() == '#EOD' or not line.strip(): # Stop at #EOD or empty lines
             break
         raw_data.append(line.strip())
 
     # Process each data line
     processed_data = []
     for line in raw_data:
+        # Remove the leading '|' and trailing '|' if they exist, then split by '|'
         cleaned_line = line.strip()
-        if cleaned_line.startswith('|') and cleaned_line.endswith('|'):
-            cleaned_line = cleaned_line[1:-1]
+        if cleaned_line.startswith('|') and cleaned_line.endswith('|'): [cite: 28, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43]
+            cleaned_line = cleaned_line[1:-1] # Remove first and last pipe
         
-        parts = [part.strip() for part in cleaned_line.split('|')]
+        parts = [part.strip() for part in cleaned_line.split('|')] [cite: 28, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43]
         processed_data.append(parts)
 
     # Create DataFrame
     if processed_data:
         num_data_columns = len(processed_data[0])
         
+        # Adjust column_definitions to match the actual number of data columns
         if len(column_definitions) < num_data_columns:
+            # Pad with generic names if definitions are fewer than actual data columns
             for i in range(len(column_definitions), num_data_columns):
-                column_definitions.append(f"Reserved_{i+1-len(column_definitions)}")
+                column_definitions.append(f"Reserved_{i+1}") # Simplified for dynamically added 'Reserved'
         elif len(column_definitions) > num_data_columns:
+            # Truncate if definitions are more than actual data columns
             column_definitions = column_definitions[:num_data_columns]
 
         df = pd.DataFrame(processed_data, columns=column_definitions)
