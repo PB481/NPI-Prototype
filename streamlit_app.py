@@ -17,7 +17,6 @@ if deal_file and excel_file:
 
     try:
         # --- 1. Read deal data from text file ---
-        # Decode the uploaded text file
         deal_lines = deal_file.getvalue().decode("utf-8").splitlines()
 
         data = []
@@ -55,16 +54,24 @@ if deal_file and excel_file:
         details_df = report_df.iloc[details_data_start_index:].copy()
         details_df.columns = report_df.iloc[details_header_index]
 
+        # Ensure 'Security Sedol' is string type for merging
+        details_df['Security Sedol'] = details_df['Security Sedol'].astype(str)
+
         # --- 4. Merge and calculate ---
-        details_df = pd.merge(details_df, deal_subset, left_on='Security Sedol', right_on='isin', how='left')
-        details_df['net_domestic_amount_to_purify'] = pd.to_numeric(details_df['net_domestic_amount_to_purify'].replace('', np.nan), errors='coerce')
-        details_df['Accured Income Net (Base)'] = pd.to_numeric(details_df['Accured Income Net (Base)'], errors='coerce')
-        details_df['NPI Base'] = details_df['net_domestic_amount_to_purify'] * details_df['Accured Income Net (Base)']
+        merged_df = pd.merge(details_df, deal_subset, left_on='Security Sedol', right_on='isin', how='left')
+
+        if merged_df.empty:
+            st.warning("No matching ISINs found between the uploaded files. Please check the 'Security Sedol' column in your Excel file and 'isin' in your text file.")
+            st.stop()
+
+        merged_df['net_domestic_amount_to_purify'] = pd.to_numeric(merged_df['net_domestic_amount_to_purify'].replace('', np.nan), errors='coerce')
+        merged_df['Accured Income Net (Base)'] = pd.to_numeric(merged_df['Accured Income Net (Base)'], errors='coerce')
+        merged_df['NPI Base'] = merged_df['net_domestic_amount_to_purify'] * merged_df['Accured Income Net (Base)']
 
         # --- 5. Clean up and calculate total ---
-        details_df['net_domestic_amount_to_purify'] = details_df['net_domestic_amount_to_purify'].fillna(0)
-        details_df['NPI Base'] = details_df['NPI Base'].fillna(0)
-        details_df = details_df.drop(columns=['isin']) # drop redundant isin column
+        merged_df['net_domestic_amount_to_purify'] = merged_df['net_domestic_amount_to_purify'].fillna(0)
+        merged_df['NPI Base'] = merged_df['NPI Base'].fillna(0)
+        details_df = merged_df.drop(columns=['isin']) # drop redundant isin column
         npi_base_total = details_df['NPI Base'].sum()
 
         # --- 6. Add total to summary ---
