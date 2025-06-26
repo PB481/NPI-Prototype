@@ -540,6 +540,7 @@ if deal_file and excel_file:
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
 
-except Exception as e:
-    st.error(f"An error occurred during processing: {e}")
-    st.error("Please ensure the uploaded files are correct and match the expected format.")
+    except Exception as e:
+        st.error(f"An error occurred during processing: {e}")
+        st.error("Please ensure the uploaded files are correct and match the expected format.")
+''', language='python')
