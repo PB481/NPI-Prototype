@@ -1,172 +1,98 @@
-import datetime
-import random
-
-import altair as alt
-import numpy as np
-import pandas as pd
 import streamlit as st
+import pandas as pd
+import re
 
-# Show app title and description.
-st.set_page_config(page_title="Support tickets", page_icon="🎫")
-st.title("🎫 Support tickets")
-st.write(
+def load_data(file_path):
     """
-    This app shows how you can build an internal tool in Streamlit. Here, we are 
-    implementing a support ticket workflow. The user can create a ticket, edit 
-    existing tickets, and view some statistics.
+    Loads and parses the data from the custom text file.
     """
-)
+    with open(file_path, 'r') as f:
+        lines = f.readlines()
 
-# Create a random Pandas dataframe with existing tickets.
-if "df" not in st.session_state:
+    # Find the line that defines column headers (e.g., "# 1        2       3 ...")
+    header_line_index = -1
+    for i, line in enumerate(lines):
+        if re.match(r'^#\s*\d+\s+\d+\s+\d+', line):
+            header_line_index = i
+            break
 
-    # Set seed for reproducibility.
-    np.random.seed(42)
+    if header_line_index == -1:
+        st.error("Could not find the header line in the file.")
+        return pd.DataFrame()
 
-    # Make up some fake issue descriptions.
-    issue_descriptions = [
-        "Network connectivity issues in the office",
-        "Software application crashing on startup",
-        "Printer not responding to print commands",
-        "Email server downtime",
-        "Data backup failure",
-        "Login authentication problems",
-        "Website performance degradation",
-        "Security vulnerability identified",
-        "Hardware malfunction in the server room",
-        "Employee unable to access shared files",
-        "Database connection failure",
-        "Mobile application not syncing data",
-        "VoIP phone system issues",
-        "VPN connection problems for remote employees",
-        "System updates causing compatibility issues",
-        "File server running out of storage space",
-        "Intrusion detection system alerts",
-        "Inventory management system errors",
-        "Customer data not loading in CRM",
-        "Collaboration tool not sending notifications",
-    ]
+    # Extract column names from the lines starting with '#'
+    column_definitions = []
+    for line in lines:
+        if line.startswith('#') and ' #' not in line and 'Reserved' not in line and 'EOD' not in line and not re.match(r'^#\s*\d+\s+\d+\s+\d+', line):
+            parts = line.strip().split(None, 3) # Split by whitespace, max 3 splits
+            if len(parts) >= 4:
+                # Extract the field name, which is the third part
+                column_definitions.append(parts[2])
 
-    # Generate the dataframe with 100 rows/tickets.
-    data = {
-        "ID": [f"TICKET-{i}" for i in range(1100, 1000, -1)],
-        "Issue": np.random.choice(issue_descriptions, size=100),
-        "Status": np.random.choice(["Open", "In Progress", "Closed"], size=100),
-        "Priority": np.random.choice(["High", "Medium", "Low"], size=100),
-        "Date Submitted": [
-            datetime.date(2023, 6, 1) + datetime.timedelta(days=random.randint(0, 182))
-            for _ in range(100)
-        ],
-    }
-    df = pd.DataFrame(data)
+    # The actual data starts after the "SSL>>>..." line
+    data_start_index = -1
+    for i, line in enumerate(lines):
+        if line.startswith('SSL>>>>>>>SSV'): # This specific pattern indicates the start of data format
+            data_start_index = i + 1 # Data starts on the next line
+            break
 
-    # Save the dataframe in session state (a dictionary-like object that persists across
-    # page runs). This ensures our data is persisted when the app updates.
-    st.session_state.df = df
+    if data_start_index == -1:
+        st.error("Could not find the start of data in the file.")
+        return pd.DataFrame()
 
+    # Extract raw data lines
+    raw_data = []
+    for line in lines[data_start_index:]:
+        if line.strip() == '#EOD' or not line.strip(): # Stop at #EOD or empty lines
+            break
+        raw_data.append(line.strip())
 
-# Show a section to add a new ticket.
-st.header("Add a ticket")
+    # Process each data line
+    processed_data = []
+    for line in raw_data:
+        # Remove the leading '| ' and trailing ' |' if they exist, then split by '|'
+        cleaned_line = line.strip()
+        if cleaned_line.startswith('|') and cleaned_line.endswith('|'):
+            cleaned_line = cleaned_line[1:-1]
+        
+        # Split by '|' and strip whitespace from each part
+        parts = [part.strip() for part in cleaned_line.split('|')]
+        processed_data.append(parts)
 
-# We're adding tickets via an `st.form` and some input widgets. If widgets are used
-# in a form, the app will only rerun once the submit button is pressed.
-with st.form("add_ticket_form"):
-    issue = st.text_area("Describe the issue")
-    priority = st.selectbox("Priority", ["High", "Medium", "Low"])
-    submitted = st.form_submit_button("Submit")
+    # Create DataFrame
+    # Ensure column_definitions has enough names for all parts
+    # If the number of columns in data doesn't match the definitions,
+    # we'll truncate or pad column_definitions as needed for DataFrame creation.
+    if processed_data:
+        num_data_columns = len(processed_data[0])
+        if len(column_definitions) < num_data_columns:
+            # Pad with generic names if definitions are fewer than actual data columns
+            for i in range(len(column_definitions), num_data_columns):
+                column_definitions.append(f"Unnamed_Column_{i+1}")
+        elif len(column_definitions) > num_data_columns:
+            # Truncate if definitions are more than actual data columns
+            column_definitions = column_definitions[:num_data_columns]
 
-if submitted:
-    # Make a dataframe for the new ticket and append it to the dataframe in session
-    # state.
-    recent_ticket_number = int(max(st.session_state.df.ID).split("-")[1])
-    today = datetime.datetime.now().strftime("%m-%d-%Y")
-    df_new = pd.DataFrame(
-        [
-            {
-                "ID": f"TICKET-{recent_ticket_number+1}",
-                "Issue": issue,
-                "Status": "Open",
-                "Priority": priority,
-                "Date Submitted": today,
-            }
-        ]
-    )
+        df = pd.DataFrame(processed_data, columns=column_definitions)
+    else:
+        df = pd.DataFrame()
 
-    # Show a little success message.
-    st.write("Ticket submitted! Here are the ticket details:")
-    st.dataframe(df_new, use_container_width=True, hide_index=True)
-    st.session_state.df = pd.concat([df_new, st.session_state.df], axis=0)
+    return df
 
-# Show section to view and edit existing tickets in a table.
-st.header("Existing tickets")
-st.write(f"Number of tickets: `{len(st.session_state.df)}`")
+# Streamlit App
+st.title("Custom Deal Security File Viewer")
 
-st.info(
-    "You can edit the tickets by double clicking on a cell. Note how the plots below "
-    "update automatically! You can also sort the table by clicking on the column headers.",
-    icon="✍️",
-)
+file_path = "_deal_custom_20250323_D_712743.txt" # Path to your uploaded file
 
-# Show the tickets dataframe with `st.data_editor`. This lets the user edit the table
-# cells. The edited data is returned as a new dataframe.
-edited_df = st.data_editor(
-    st.session_state.df,
-    use_container_width=True,
-    hide_index=True,
-    column_config={
-        "Status": st.column_config.SelectboxColumn(
-            "Status",
-            help="Ticket status",
-            options=["Open", "In Progress", "Closed"],
-            required=True,
-        ),
-        "Priority": st.column_config.SelectboxColumn(
-            "Priority",
-            help="Priority",
-            options=["High", "Medium", "Low"],
-            required=True,
-        ),
-    },
-    # Disable editing the ID and Date Submitted columns.
-    disabled=["ID", "Date Submitted"],
-)
-
-# Show some metrics and charts about the ticket.
-st.header("Statistics")
-
-# Show metrics side by side using `st.columns` and `st.metric`.
-col1, col2, col3 = st.columns(3)
-num_open_tickets = len(st.session_state.df[st.session_state.df.Status == "Open"])
-col1.metric(label="Number of open tickets", value=num_open_tickets, delta=10)
-col2.metric(label="First response time (hours)", value=5.2, delta=-1.5)
-col3.metric(label="Average resolution time (hours)", value=16, delta=2)
-
-# Show two Altair charts using `st.altair_chart`.
-st.write("")
-st.write("##### Ticket status per month")
-status_plot = (
-    alt.Chart(edited_df)
-    .mark_bar()
-    .encode(
-        x="month(Date Submitted):O",
-        y="count():Q",
-        xOffset="Status:N",
-        color="Status:N",
-    )
-    .configure_legend(
-        orient="bottom", titleFontSize=14, labelFontSize=14, titlePadding=5
-    )
-)
-st.altair_chart(status_plot, use_container_width=True, theme="streamlit")
-
-st.write("##### Current ticket priorities")
-priority_plot = (
-    alt.Chart(edited_df)
-    .mark_arc()
-    .encode(theta="count():Q", color="Priority:N")
-    .properties(height=300)
-    .configure_legend(
-        orient="bottom", titleFontSize=14, labelFontSize=14, titlePadding=5
-    )
-)
-st.altair_chart(priority_plot, use_container_width=True, theme="streamlit")
+if st.button("Load Data"):
+    if pd.isna(file_path):
+        st.warning("Please ensure the file '_deal_custom_20250323_D_712743.txt' is in the same directory.")
+    else:
+        df = load_data(file_path)
+        if not df.empty:
+            st.success("Data loaded successfully!")
+            st.dataframe(df)
+            st.write("First 5 rows of the data:")
+            st.write(df.head())
+        else:
+            st.error("Failed to load data. Please check the file format.")
