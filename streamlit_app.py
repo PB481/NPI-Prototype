@@ -1,191 +1,102 @@
 import streamlit as st
 import pandas as pd
-import re
+import numpy as np
 import io
 
-# --- Function to load and parse the custom TXT file ---
-def load_txt_data(uploaded_txt_file):
-    if uploaded_txt_file is None:
-        return pd.DataFrame(), "No TXT file uploaded."
+st.set_page_config(layout="wide")
+st.title("Dividend Receivable Report Generator")
 
-    try:
-        string_data = uploaded_txt_file.getvalue().decode("utf-8")
-        lines = string_data.splitlines()
-
-        column_definitions = []
-        in_column_definition_section = False
-        for line in lines:
-            if line.strip() == '*':
-                if not in_column_definition_section:
-                    in_column_definition_section = True
-                    continue
-                else:
-                    break
-            if in_column_definition_section:
-                col_match = re.match(r'#\s*\d+\s+(.+?)\s+(\w+)\s+[DNST]\s+\d+\s+\d+', line)
-                if col_match:
-                    programmatic_name = col_match.group(2)
-                    column_definitions.append(programmatic_name)
-
-        if not column_definitions:
-            return pd.DataFrame(), "Error: Could not extract any column definitions from TXT file."
-
-        data_start_index = -1
-        for i, line in enumerate(lines):
-            if re.match(r'SSL>+(SSV|SSL)', line.strip()):
-                data_start_index = i + 1
-                break
-
-        if data_start_index == -1:
-            return pd.DataFrame(), "Error: Could not find the start of data in TXT file."
-
-        raw_data = []
-        for line in lines[data_start_index:]:
-            if line.strip() == '#EOD' or not line.strip():
-                break
-            if not line.strip():
-                continue
-            raw_data.append(line.strip())
-
-        if not raw_data:
-            return pd.DataFrame(), "Error: No raw data rows found in TXT file."
-
-        processed_data = []
-        for line in raw_data:
-            cleaned_line = line.strip()
-            if cleaned_line.startswith('|') and cleaned_line.endswith('|'):
-                cleaned_line = cleaned_line[1:-1]
-            parts = [part.strip() for part in cleaned_line.split('|')]
-            processed_data.append(parts)
-
-        if not processed_data:
-            return pd.DataFrame(), "Error: Failed to parse data lines into columns from TXT file."
-
-        num_data_columns = len(processed_data[0])
-        if len(column_definitions) < num_data_columns:
-            for i in range(len(column_definitions), num_data_columns):
-                column_definitions.append(f"Unnamed_Col_{i + 1}")
-        elif len(column_definitions) > num_data_columns:
-            column_definitions = column_definitions[:num_data_columns]
-
-        txt_df = pd.DataFrame(processed_data, columns=column_definitions)
-        return txt_df, "TXT file loaded successfully."
-
-    except Exception as e:
-        return pd.DataFrame(), f"An unexpected error occurred while processing TXT: {e}"
-
-
-# --- Streamlit App ---
-st.set_page_config(layout="wide") # Use wide layout for better table viewing
-st.title("Dividend Data Merger & NPI Calculator")
-st.write("Upload your Dividend Receivable Report (CSV/Excel) and the custom Deal Security TXT file.")
+st.write("Upload your _deal_custom_ text file and Divdends_Receivable_Report_Test Excel file to generate the combined report.")
 
 # File uploaders
-uploaded_excel_file = st.file_uploader("Upload Dividends Receivable Report (CSV/Excel)", type=["csv", "xlsx"])
-uploaded_txt_file = st.file_uploader("Upload Custom Deal Security TXT File", type=["txt"])
+deal_file = st.file_uploader("Upload _deal_custom_20250323_D_712743.txt", type=["txt"])
+excel_file = st.file_uploader("Upload Divdends_Receivable_Report_Test.xlsx", type=["xlsx"])
 
-# Process files only if both are uploaded
-if uploaded_excel_file and uploaded_txt_file:
-    st.success("Both files uploaded! Click 'Process Data' to continue.")
-    
-    if st.button("Process Data"):
-        # --- Load Excel (CSV) Data ---
-        excel_df = pd.DataFrame()
-        excel_load_status = ""
-        try:
-            if uploaded_excel_file.name.endswith('.csv'):
-                excel_df = pd.read_csv(uploaded_excel_file, header=18)
-            elif uploaded_excel_file.name.endswith('.xlsx'):
-                excel_df = pd.read_excel(uploaded_excel_file, header=18)
-            
-            excel_df.columns = excel_df.columns.str.strip() # Clean up column names
-            excel_load_status = "Excel file loaded successfully."
+if deal_file and excel_file:
+    st.success("Files uploaded successfully!")
 
-            # Debugging: Check if key columns exist in Excel DF
-            if 'ISIN' not in excel_df.columns:
-                excel_load_status += "\nWarning: 'ISIN' column not found in Excel file. Merge might fail."
-            if 'Accured Income Net (Base)' not in excel_df.columns:
-                 excel_load_status += "\nWarning: 'Accured Income Net (Base)' column not found in Excel file. NPI calculation might fail."
+    try:
+        # --- 1. Read deal data from text file ---
+        # Decode the uploaded text file
+        deal_lines = deal_file.getvalue().decode("utf-8").splitlines()
 
-            st.subheader("Dividends Receivable Report Preview")
-            st.dataframe(excel_df.head())
-            st.info(excel_load_status)
+        data = []
+        for line in deal_lines:
+            if line.startswith('|'):
+                fields = [x.strip() for x in line.split('|')[1:-1]]
+                data.append(fields)
 
-        except Exception as e:
-            excel_load_status = f"Error loading Excel file: {e}"
-            st.error(excel_load_status)
-            excel_df = pd.DataFrame() # Ensure df is empty on error
+        columns = [
+            'calc_date', 'msci_index_code', 'msci_dividend_code', 'xd_date', 'reinvestment_in_index_date',
+            'dividend_description', 'msci_security_code', 'msci_timeseries_code', 'msci_issuer_code',
+            'security_name', 'bb_ticker', 'dividend_ISO_currency_symbol', 'unadjusted_dividend_amount',
+            'dividend_sub_unit', 'dividend_adjustment_factor', 'adjusted_grs_dividend_amount',
+            'withholding_tax_rate', 'adj_net_dividend_amount_int', 'adj_net_dividend_amount_dom',
+            'purified_dividend_adjust_fact', 'purified_adj_grs_div_amount', 'purified_adj_net_div_amnt_int',
+            'purified_adj_net_div_amnt_dom', 'gross_amount_to_purify', 'net_intl_amount_to_purify',
+            'net_domestic_amount_to_purify', 'isin', 'reserved_1', 'reserved_2', 'reserved_3', 'reserved_4',
+            'reserved_5', 'reserved_6', 'reserved_7', 'reserved_8', 'reserved_9', 'reserved_10',
+            'reserved_11', 'reserved_12', 'reserved_13', 'reserved_14', 'reserved_15', 'reserved_16',
+            'reserved_17', 'reserved_18', 'reserved_19'
+        ]
+        deal_df = pd.DataFrame(data, columns=columns)
+        deal_subset = deal_df[['isin', 'net_domestic_amount_to_purify']]
 
+        # --- 2. Read report data from Excel file ---
+        excel_data = io.BytesIO(excel_file.getvalue())
+        report_df = pd.read_excel(excel_data, header=None)
 
-        # --- Load TXT Data ---
-        txt_df, txt_load_status = load_txt_data(uploaded_txt_file)
-        if not txt_df.empty:
-            st.subheader("Custom Deal Security TXT File Preview")
-            st.dataframe(txt_df.head())
-            st.info(txt_load_status)
-            # Debugging: Check if key columns exist in TXT DF
-            if 'isin' not in txt_df.columns:
-                txt_load_status += "\nWarning: 'isin' column not found in TXT file. Merge might fail."
-            if 'net_domestic_amount_to_purify' not in txt_df.columns:
-                 txt_load_status += "\nWarning: 'net_domestic_amount_to_purify' column not found in TXT file. NPI calculation might fail."
-        else:
-            st.error(txt_load_status) # Display the error message from load_txt_data
+        # --- 3. Split report into summary and details ---
+        details_start_index = report_df[report_df[0] == 'DIVIDENDS RECIEVABLE DEATAILS'].index[0]
+        details_header_index = details_start_index + 2
+        details_data_start_index = details_header_index + 1
 
-        # --- Merge and Calculate NPI if both DFs are loaded ---
-        if not excel_df.empty and not txt_df.empty:
-            st.subheader("Merging DataFrames...")
-            # Ensure the key columns are of compatible types (string) and clean them
-            excel_df['ISIN'] = excel_df['ISIN'].astype(str).str.strip()
-            txt_df['isin'] = txt_df['isin'].astype(str).str.strip()
+        summary_df = report_df.iloc[:details_header_index].copy()
+        details_df = report_df.iloc[details_data_start_index:].copy()
+        details_df.columns = report_df.iloc[details_header_index]
 
-            # Perform the merge using 'ISIN' from both dataframes
-            merged_df = pd.merge(excel_df, txt_df[['isin', 'net_domestic_amount_to_purify']],
-                                 left_on='ISIN', right_on='isin', how='left')
+        # --- 4. Merge and calculate ---
+        details_df = pd.merge(details_df, deal_subset, left_on='Security Sedol', right_on='isin', how='left')
+        details_df['net_domestic_amount_to_purify'] = pd.to_numeric(details_df['net_domestic_amount_to_purify'].replace('', np.nan), errors='coerce')
+        details_df['Accured Income Net (Base)'] = pd.to_numeric(details_df['Accured Income Net (Base)'], errors='coerce')
+        details_df['NPI Base'] = details_df['net_domestic_amount_to_purify'] * details_df['Accured Income Net (Base)']
 
-            # Drop the duplicate 'isin' column from the merge
-            merged_df.drop(columns=['isin'], inplace=True, errors='ignore') # errors='ignore' to prevent error if 'isin' doesn't exist
+        # --- 5. Clean up and calculate total ---
+        details_df['net_domestic_amount_to_purify'] = details_df['net_domestic_amount_to_purify'].fillna(0)
+        details_df['NPI Base'] = details_df['NPI Base'].fillna(0)
+        details_df = details_df.drop(columns=['isin']) # drop redundant isin column
+        npi_base_total = details_df['NPI Base'].sum()
 
-            st.success("DataFrames merged!")
-            
-            # --- Calculate NPI ---
-            st.subheader("Calculating NPI...")
-            # Ensure 'Accured Income Net (Base)' and 'net_domestic_amount_to_purify' are numeric
-            if 'Accured Income Net (Base)' in merged_df.columns:
-                # Clean the 'Accured Income Net (Base)' column: remove non-numeric chars except digits, dot, and minus sign
-                merged_df['Accured Income Net (Base)'] = merged_df['Accured Income Net (Base)'].astype(str).str.replace(r'[^\d.-]', '', regex=True)
-                merged_df['Accured Income Net (Base)'] = pd.to_numeric(merged_df['Accured Income Net (Base)'], errors='coerce')
-            else:
-                st.warning("'Accured Income Net (Base)' column not found after merge. Cannot calculate NPI accurately.")
+        # --- 6. Add total to summary ---
+        total_row_index = summary_df[summary_df[0] == 'Total'].index[0]
+        new_row_data = {
+            0: 'Total NPI',
+            3: npi_base_total
+        }
+        new_row = pd.DataFrame(new_row_data, index=[0])
 
-            if 'net_domestic_amount_to_purify' in merged_df.columns:
-                merged_df['net_domestic_amount_to_purify'] = pd.to_numeric(merged_df['net_domestic_amount_to_purify'], errors='coerce')
-            else:
-                st.warning("'net_domestic_amount_to_purify' column not found after merge. Cannot calculate NPI accurately.")
+        summary_df = pd.concat([summary_df.iloc[:total_row_index+1], new_row, summary_df.iloc[total_row_index+1:]]).reset_index(drop=True)
 
-            # Perform calculation only if both columns exist and are numeric
-            if 'Accured Income Net (Base)' in merged_df.columns and 'net_domestic_amount_to_purify' in merged_df.columns:
-                merged_df['Accured Income Net (Base)'].fillna(0, inplace=True)
-                merged_df['net_domestic_amount_to_purify'].fillna(0, inplace=True)
-                merged_df['NPI'] = merged_df['Accured Income Net (Base)'] * merged_df['net_domestic_amount_to_purify']
-                st.success("NPI calculated!")
-            else:
-                st.error("NPI calculation skipped due to missing or invalid source columns.")
-                merged_df['NPI'] = None # Assign None or NaN if calculation can't proceed
+        st.subheader("Generated Report Preview:")
+        # Display the combined DataFrame
+        # For display, we'll combine them back, but for saving, we'll use the separate DFs
+        combined_display_df = pd.concat([summary_df, details_df.iloc[0:0], details_df], ignore_index=True)
+        st.dataframe(combined_display_df)
 
-            st.subheader("Final Merged Data with NPI")
-            st.dataframe(merged_df)
+        # --- 7. Provide download button ---
+        output_excel_buffer = io.BytesIO()
+        with pd.ExcelWriter(output_excel_buffer, engine='openpyxl') as writer:
+            summary_df.to_excel(writer, index=False, header=False, sheet_name='Sheet1')
+            details_df.to_excel(writer, index=False, header=True, sheet_name='Sheet1', startrow=len(summary_df))
+        output_excel_buffer.seek(0)
 
-            st.subheader("Sample of Key Columns and NPI")
-            # Filter for relevant columns if they exist
-            display_cols = ['ISIN', 'Accured Income Net (Base)', 'net_domestic_amount_to_purify', 'NPI']
-            display_cols = [col for col in display_cols if col in merged_df.columns]
-            st.dataframe(merged_df[display_cols].head(10))
+        st.download_button(
+            label="Download Generated Report",
+            data=output_excel_buffer,
+            file_name="Dividends_Receivable_Report_with_NPI.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
 
-        else:
-            st.error("Cannot perform merge and NPI calculation. Please resolve issues with file uploads/parsing.")
-
-elif uploaded_excel_file or uploaded_txt_file:
-    st.info("Please upload both files to proceed.")
-
-else:
-    st.info("Waiting for file uploads...")
+    except Exception as e:
+        st.error(f"An error occurred during processing: {e}")
+        st.error("Please ensure the uploaded files are correct and match the expected format.")
