@@ -1,114 +1,129 @@
 import streamlit as st
 import pandas as pd
 import re
-import io # Import the io module for handling in-memory files
+import io
 
 def load_data_from_upload(uploaded_file):
-    """
-    Loads and parses the data from an uploaded custom text file.
-    """
     if uploaded_file is None:
         st.warning("Please upload a file to proceed.")
         return pd.DataFrame()
 
-    # Read the file content into a string
     string_data = uploaded_file.getvalue().decode("utf-8")
     lines = string_data.splitlines()
 
-    st.info("Attempting to parse uploaded file...")
+    st.info("Starting file parsing process...")
+    st.write("---") # Separator for clarity in debug messages
 
-    # --- Step 1: Extract Column Definitions ---
+    # --- Step 1: Extract Column Definitions (Programmatic Names) ---
     column_definitions = []
-    # This flag indicates when we are in the section where column names are listed
     in_column_definition_section = False
     
-    # Iterate through lines to find the section containing column definitions
-    for line in lines:
-        if line.strip() == '*': # '*' acts as a section delimiter
+    st.info("Step 1: Attempting to extract column definitions...")
+    for i, line in enumerate(lines):
+        # Trigger point for starting to collect column definitions
+        if line.strip() == '*':
             if not in_column_definition_section:
-                in_column_definition_section = True # Found the start of the column definition section
+                in_column_definition_section = True
+                st.info(f"Found first '*' at line {i+1}. Starting to look for column definitions.")
                 continue # Skip the '*' line itself
             else:
                 # Found the second '*' or another delimiter, so we're out of the section
+                st.info(f"Found second '*' at line {i+1}. Stopping column definition collection.")
                 break # Stop processing lines for column definitions
 
         if in_column_definition_section:
-            # Regex to match lines like "# 1 Calculation Date calc_date D 8 0"
-            # Group 1: Descriptive Name (e.g., "Calculation Date")
-            # Group 2: Programmatic Name (e.g., "calc_date") - this is what we want
+            # Match lines like "# 1 Calculation Date calc_date D 8 0"
+            # Capture the programmatic name (e.g., 'calc_date')
             col_match = re.match(r'#\s*\d+\s+(.+?)\s+(\w+)\s+[DNST]\s+\d+\s+\d+', line)
             if col_match:
-                column_definitions.append(col_match.group(2)) # Extract the programmatic name
+                programmatic_name = col_match.group(2)
+                column_definitions.append(programmatic_name)
+                # st.write(f"Line {i+1}: Matched column definition: '{programmatic_name}'") # Uncomment for very detailed debug
+            # else:
+                # st.write(f"Line {i+1}: No column definition match found.") # Uncomment for very detailed debug
 
     if not column_definitions:
-        st.error("Could not extract any column definitions. Please check the format of the header lines.")
+        st.error("Error in Step 1: Could not extract any column definitions. Please ensure lines like '# 1 Calculation Date calc_date D 8 0' are present and correctly formatted.")
         return pd.DataFrame()
     else:
-        st.info(f"Detected {len(column_definitions)} column names.")
-        # st.write(f"Extracted column definitions: {column_definitions}") # For deep debugging
+        st.info(f"Step 1: Successfully extracted {len(column_definitions)} column names: {column_definitions[:5]}... (showing first 5)") # Show first few names
+    st.write("---")
 
 
-    # --- Step 2: Find the Data Start Index ---
+    # --- Step 2: Find the Data Start Index (The SSL line) ---
     data_start_index = -1
+    st.info("Step 2: Attempting to find the start of the data section (SSL line)...")
     for i, line in enumerate(lines):
-        # Relaxed regex to match 'SSL' followed by any number of '>' and then 'SSV' or 'SSL'
-        # This covers patterns like "SSL>>>>>>>SSV" or "SSL>>>>>>>>>>>>>>>a>>>>SSL"
+        # This regex should be robust to your SSL line with 'a' and varying '>' counts
         if re.match(r'SSL>+(SSV|SSL)', line.strip()):
             data_start_index = i + 1 # Data starts on the next line
-            st.info(f"Found data start pattern at line {i+1}. Data expected to start at line {data_start_index + 1}.")
+            st.info(f"Step 2: Found data start pattern at line {i+1}. Raw data expected to begin from line {data_start_index + 1}.")
             break
 
     if data_start_index == -1:
-        st.error("Could not find the start of data in the file. Expected a pattern like 'SSL>>>>>>SSV...' or 'SSL>>>>>>SSL...'.")
+        st.error("Error in Step 2: Could not find the start of data in the file. Expected a pattern like 'SSL>>>>>>SSV...' or 'SSL>>>>>>SSL...' (on a line of its own).")
         return pd.DataFrame()
+    st.write("---")
 
 
     # --- Step 3: Extract Raw Data Lines ---
     raw_data = []
-    for line in lines[data_start_index:]:
-        if line.strip() == '#EOD' or not line.strip(): # Stop at #EOD or empty lines
+    st.info("Step 3: Extracting raw data rows...")
+    for i, line in enumerate(lines[data_start_index:]):
+        # The line index relative to the start of the slice
+        original_line_number = data_start_index + i + 1
+        if line.strip() == '#EOD':
+            st.info(f"Found '#EOD' at line {original_line_number}. Stopping raw data extraction.")
             break
+        if not line.strip(): # Skip empty lines
+            # st.write(f"Line {original_line_number}: Skipping empty line.") # Uncomment for very detailed debug
+            continue
         raw_data.append(line.strip())
     
     if not raw_data:
-        st.error("No data rows found after the data start pattern and before '#EOD'.")
+        st.error("Error in Step 3: No data rows found after the data start pattern and before '#EOD'. Please ensure data rows are present.")
         return pd.DataFrame()
     else:
-        st.info(f"Extracted {len(raw_data)} raw data rows.")
+        st.info(f"Step 3: Successfully extracted {len(raw_data)} raw data rows.")
+        # st.write(f"First raw data line: '{raw_data[0]}'") # Uncomment for detailed debug
+    st.write("---")
 
 
-    # --- Step 4: Process Each Data Line ---
+    # --- Step 4: Process Each Data Line (Split into parts) ---
     processed_data = []
-    for line in raw_data:
-        # Remove the leading '|' and trailing '|' if they exist, then split by '|'
+    st.info("Step 4: Processing raw data rows into columns...")
+    for i, line in enumerate(raw_data):
         cleaned_line = line.strip()
         if cleaned_line.startswith('|') and cleaned_line.endswith('|'):
             cleaned_line = cleaned_line[1:-1] # Remove first and last pipe
         
         parts = [part.strip() for part in cleaned_line.split('|')]
         processed_data.append(parts)
-
+    
     if not processed_data:
-        st.error("Failed to parse data lines into columns. Processed data is empty.")
+        st.error("Error in Step 4: Failed to parse data lines into columns. Processed data is empty.")
         return pd.DataFrame()
+    else:
+        st.info(f"Step 4: Successfully processed {len(processed_data)} data rows. First row has {len(processed_data[0])} parts.")
+        # st.write(f"First processed data parts: {processed_data[0]}") # Uncomment for detailed debug
+    st.write("---")
+
 
     # --- Step 5: Create DataFrame ---
-    # Adjust column_definitions to match the actual number of data columns
+    st.info("Step 5: Creating DataFrame...")
     num_data_columns = len(processed_data[0])
-    st.info(f"First data row has {num_data_columns} columns.")
-    st.info(f"Number of extracted column definitions: {len(column_definitions)}")
-
+    
+    # Adjust column_definitions to match the actual number of data columns
     if len(column_definitions) < num_data_columns:
-        # Pad with generic names if definitions are fewer than actual data columns
         for i in range(len(column_definitions), num_data_columns):
             column_definitions.append(f"Unnamed_Col_{i + 1}")
-        st.warning(f"Column definitions ({len(column_definitions)}) mismatch data columns ({num_data_columns}). Padded column names.")
+        st.warning(f"Warning in Step 5: Number of extracted column definitions ({len(column_definitions)}) is less than data columns ({num_data_columns}). Padded column names.")
     elif len(column_definitions) > num_data_columns:
-        # Truncate if definitions are more than actual data columns
-        st.warning(f"Column definitions ({len(column_definitions)}) mismatch data columns ({num_data_columns}). Truncating column names.")
+        st.warning(f"Warning in Step 5: Number of extracted column definitions ({len(column_definitions)}) is greater than data columns ({num_data_columns}). Truncating column names.")
         column_definitions = column_definitions[:num_data_columns]
 
     df = pd.DataFrame(processed_data, columns=column_definitions)
+    st.info("Step 5: DataFrame created.")
     
     return df
 
