@@ -39,7 +39,7 @@ if deal_file and excel_file:
             'reserved_17', 'reserved_18', 'reserved_19'
         ]
         deal_df = pd.DataFrame(data, columns=columns)
-        deal_subset = deal_df[['isin', 'unadjusted_dividend_amount', 'net_domestic_amount_to_purify']]
+        deal_subset = deal_df[['isin', 'net_domestic_amount_to_purify']]
 
         # --- 2. Read report data from Excel file ---
         excel_data = io.BytesIO(excel_file.getvalue())
@@ -66,24 +66,14 @@ if deal_file and excel_file:
             st.warning(f"Security count mismatch! Excel file has {len(excel_securities)} unique securities, while text file has {len(deal_securities)}.")
             st.warning(f"Securities only in Excel: {excel_securities - deal_securities}")
             st.warning(f"Securities only in Text: {deal_securities - excel_securities}")
-            st.stop()
+            # Do not stop, just warn
 
-        # Check 2: Declared dividend amount vs Div Rate
-        # Merge for comparison
-        comparison_df = pd.merge(details_df, deal_subset, left_on='Security Sedol', right_on='isin', how='inner')
-
-        # Convert to numeric for comparison, coercing errors will turn non-numeric to NaN
-        comparison_df['unadjusted_dividend_amount'] = pd.to_numeric(comparison_df['unadjusted_dividend_amount'], errors='coerce')
-        comparison_df['Div Rate'] = pd.to_numeric(comparison_df['Div Rate'], errors='coerce')
-
-        # Find discrepancies (allowing for small floating point differences)
-        discrepancies = comparison_df[~np.isclose(comparison_df['unadjusted_dividend_amount'], comparison_df['Div Rate'], atol=1e-9)]
-
-        if not discrepancies.empty:
-            st.error("Dividend rate mismatch detected for the following securities:")
-            for index, row in discrepancies.iterrows():
-                st.error(f"  Security: {row['Security Sedol']} (Excel Div Rate: {row['Div Rate']}, Text Declared Amount: {row['unadjusted_dividend_amount']})")
-            st.stop()
+        # New Check: Duplicate ISINs in deal_df
+        duplicate_isins = deal_df[deal_df.duplicated(subset=['isin'], keep=False)]['isin'].unique()
+        if len(duplicate_isins) > 0:
+            st.warning(f"Multiple entries found for the following ISIN(s) in the text file: {', '.join(duplicate_isins)}.")
+            st.warning("This might lead to unexpected results in the NPI Base calculation if not handled as intended.")
+            # Do not stop, just warn
 
         # --- 4. Merge and calculate (using the original details_df for the main merge) ---
         merged_df = pd.merge(details_df, deal_subset, left_on='Security Sedol', right_on='isin', how='left')
@@ -99,7 +89,7 @@ if deal_file and excel_file:
         # --- 5. Clean up and calculate total ---
         merged_df['net_domestic_amount_to_purify'] = merged_df['net_domestic_amount_to_purify'].fillna(0)
         merged_df['NPI Base'] = merged_df['NPI Base'].fillna(0)
-        details_df = merged_df.drop(columns=['isin', 'unadjusted_dividend_amount']) # drop redundant columns
+        details_df = merged_df.drop(columns=['isin']) # drop redundant isin column
         npi_base_total = details_df['NPI Base'].sum()
 
         # --- 6. Add total to summary ---
