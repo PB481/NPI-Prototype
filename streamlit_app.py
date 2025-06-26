@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import io
-import inspect
+import inspect # Import the inspect module
 import datetime # Import datetime module
 
 st.set_page_config(layout="wide")
@@ -151,3 +151,39 @@ st.markdown("---") # Add a horizontal rule
 with st.expander("View Application Source Code"):
     source_code = inspect.getsource(inspect.currentframe())
     st.code(source_code, language='python')
+
+st.markdown("---") # Add another horizontal rule
+
+# --- NPI Calculation Scenarios Expander ---
+with st.expander("Understanding NPI Calculation and Daily Runs"):
+    st.markdown("""
+    This section clarifies the implications of various data points and the rationale behind daily report generation for NPI.
+
+    ### Ex-Dividend Date (Ex Date) vs. Payment Date (Pay Date)
+
+    *   **Ex-Dividend Date (Ex Date):** This is the date on which a stock begins trading without the right to receive the next dividend. For NPI calculation, which is typically an accrual-based purification, the ex-date (or the date of accrual) is usually more relevant than the payment date. The NPI is calculated on the *accrued* income, not necessarily the *received* cash.
+    *   **Payment Date (Pay Date):** This is when the dividend is actually paid out to shareholders.
+
+    As long as your "Accrued Income Net (Base)" in the Dividend Receivable Report correctly reflects the dividend accrual as per your accounting standards (which typically align with ex-date), the NPI calculation will follow that.
+
+    ### FX Conversion and `net_domestic_amount_to_purify`
+
+    Our NPI calculation is: `NPI Base = net_domestic_amount_to_purify * Accrued Income Net (Base)`.
+
+    *   **`Accrued Income Net (Base)`:** This value from your Excel report is already in your base currency, having been converted using a specific FX rate at the time of accrual or reporting.
+    *   **`net_domestic_amount_to_purify`:** This value from the MSCI text file is understood to be a **currency-agnostic ratio or factor** (e.g., 0.0205% of the dividend is non-permissible), rather than an absolute monetary amount. Therefore, no additional FX conversion is needed for this factor itself, as it's applied to an already base-currency-converted accrued income.
+
+    ### Rationale for Daily Report Generation
+
+    The need for daily runs of this application is driven by:
+
+    1.  **Freshness of Input Data:**
+        *   **MSCI Data (`_deal_custom_...txt`):** While the MSCI purification factors (`net_domestic_amount_to_purify`) are updated quarterly and look forward, your daily runs will ensure you are always using the *latest available* quarterly MSCI file. More importantly, the `xd_date` filtering ensures that only relevant factors for the selected calculation date are applied.
+        *   **Dividend Receivable Report (`Divdends_Receivable_Report_Test.xlsx`):** If your internal dividend accrual report is generated daily and incorporates new dividends as they go ex-dividend, then running this app daily ensures the NPI calculation uses the most current accrued income figures.
+
+    2.  **Reporting and Compliance Requirements:**
+        *   **Shariah Compliance:** Shariah purification often requires timely calculation and distribution of non-permissible income. If your fund's policy dictates daily or frequent NPI calculation for compliance or operational purposes, then daily runs are necessary.
+        *   **Daily NAV:** Given that the fund in question has a daily Net Asset Value (NAV), calculating NPI on a daily basis ensures that the purification amount is accurately reflected in the daily NAV, providing a precise and up-to-date picture of the fund's Shariah compliance status.
+
+    By selecting a specific "NPI Calculation Date" in the app, you can generate the report as of any given day, ensuring the NPI calculation aligns with your daily NAV and reporting needs.
+    """)
